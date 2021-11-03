@@ -1,6 +1,6 @@
 # Classifier Web Scraper
 ### Purpose
-To scrape data from University at Buffalo's online [class schedule](https://www.buffalo.edu/class-schedule?semester=fall) and compile it into a MySQL database. This way, it can be used in software applications, such as [classifier.ml](http://www.classifier.ml) (motive behind the web scraper).
+To scrape data from University at Buffalo's online [class schedule](https://www.buffalo.edu/class-schedule?semester=fall) and compile it into a MySQL database. This way, it can be used in software applications.
 
 ### Setup
 You will need a local MySQL server running on your computer.
