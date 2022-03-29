@@ -4,89 +4,78 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 public class Scraper {
 	
-	// Undergrad list of departments
-	public static final String DEPARTMENT_LIST = "https://www.buffalo.edu/class-schedule?semester=fall";
+	private static final String CLASS_SCHEDULE  = "https://www.buffalo.edu/class-schedule?semester=%s&division=%d";
 	
-	// Graduate list of departments
-	public static final String DEPARTMENT_LIST_2 = "http://www.buffalo.edu/class-schedule?semester=fall&division=2";
-	
-	
-	public static List<String> getDepartmentCourseLinks() {
-		String page = Requests.Try(() -> Requests.readAllBytes(Requests.get(DEPARTMENT_LIST).getEntity().getContent()));
-		return getDepartmentCourseLinks(page);
+	public static enum Semester {
+		SPRING, SUMMER, FALL, WINTER;
 	}
 	
-	public static List<String> getDepartmentCourseLinks2() {
-		String page = Requests.Try(() -> Requests.readAllBytes(Requests.get(DEPARTMENT_LIST_2).getEntity().getContent()));
-		return getDepartmentCourseLinks(page);
+	public static enum StudentType {
+		UNDERGRADUATE, GRADUATE;
 	}
 	
-	public static List<Course> getCourses(String departmentCourseLink) {
-		String page = Requests.Try(() -> Requests.readAllBytes(Requests.get(departmentCourseLink).getEntity().getContent()));
-		return getCourses(page, false);
+	public static List<String> getDepartmentPageLinks(Semester[] semesters, StudentType[] types) {
+		List<String> result = new ArrayList<>();
+		
+		for(Semester semester : semesters) {
+			for(StudentType type : types) {
+				String link = String.format(CLASS_SCHEDULE, semester.toString(), type.ordinal() + 1);
+				result.addAll(getDepartmentPageLinks(link));
+				System.out.println(result);
+			}
+		}
+		
+		return result;
 	}
+	
+	private static List<String> getDepartmentPageLinks(String classScheduleLink) {
+		String departmentPage = new String(Requests.Try(() -> Requests.get(classScheduleLink).getEntity().getContent().readAllBytes()));
+		Pattern pattern = Pattern.compile("http://www\\.buffalo\\.edu/class-schedule\\?switch=showcourses[^\"]+");
+		Matcher matcher = pattern.matcher(departmentPage);
 
-	private static List<String> getDepartmentCourseLinks(String departmentListPage) {
-		Pattern pattern = Pattern.compile("http:\\/\\/www\\.buffalo\\.edu\\/class-schedule\\?switch=showcourses[^\"]+");
-		Matcher matcher = pattern.matcher(departmentListPage);
-
-		List<String> links = new ArrayList<String>();
+		List<String> result = new ArrayList<String>();
 		
 		while(matcher.find())
-			links.add(matcher.group());
+			result.add(matcher.group());
 		
-		return links;
+		return result;
 	}
 	
-	private static List<Course> getCourses(String departmentCoursePage, boolean x) {
-	// Gets rid of unnecessary whitespace
-	departmentCoursePage = departmentCoursePage.replaceAll("\\n|  ", "");
-	
-	// Find course information
-	Pattern pattern = Pattern.compile("(<td class=\"padding\">|<td class=\"open\">|<td class=\"closed\">|<td class=\"arrows\">|<a href=\"http://www\\.buffalo\\.edu/class-schedule\\?switch=showclass)" + "(.+?(?=<\\/td>|<\\/a>))");
-	Matcher matcher = pattern.matcher(departmentCoursePage);
+	public static List<Course> getDepartmentCourses(String departmentPageLink) {
+		return getDepartmentCoursesRaw(departmentPageLink).stream().map((list) -> new Course(list)).collect(Collectors.toList());
+	}
 
-	List<Course> courses = new ArrayList<Course>();
-	List<String> course_builder = new ArrayList<String>();
-	
-	String course_detail = null;
-	
-	while(matcher.find()) {
-		String match = matcher.group(2);
+	public static List<List<String>> getDepartmentCoursesRaw(String departmentPageLink) {
+		String departmentPage = Requests.Try(() -> Requests.readAllBytes(Requests.get(departmentPageLink).getEntity().getContent()));
+		// Gets rid of unnecessary whitespace
+		departmentPage = departmentPage.replaceAll("\\n|  ", "");
+		
+		// Find course information
+		Pattern pattern = Pattern.compile("<td class=\"(padding|open|closed|arrows)\"( nowrap=\"nowrap\")?>(.*?)</td>");
+		Matcher matcher = pattern.matcher(departmentPage);
+		
+		List<List<String>> result = new ArrayList<>();
+		List<String> course_builder = new ArrayList<>();
 
-		// Hacky way of doing things. Used to get regnum and course page link consistently.
-		if(match.contains("regnum")) {
+		while(matcher.find()) {
+			String match = matcher.group(3);
+			course_builder.add(match);
 			
-			// Class number (regnum)
-			course_detail = match.replaceAll("([^\"]+).*", "$1");
-			course_builder.set(0, match.replaceAll(".*regnum=(\\d+).*", "$1"));
-			
-			// Department + Course
-			match = match.replaceAll("[^>]+>(.*)", "$1");
+			if(course_builder.size() == 11) {
+				result.add(new ArrayList<>(course_builder));
+				course_builder.clear();
+			}
 		}
-		
-		course_builder.add(match);
-		
-		// Find next course
-		if(course_builder.size() == 11) {
-			courses.add(new Course(course_builder, course_detail.replaceAll("&amp;", "&")));
-			course_builder = new ArrayList<String>();
-			course_detail = null;
-		}
-	}
-	
-	return courses;
-}
-	
-	public static String[] getCourseDetail(String coursePageLink) {
-		String page = Requests.Try(() -> Requests.readAllBytes(Requests.get(coursePageLink).getEntity().getContent()));
-		return getCourseDetail(page, false);
-	}
 
-	private static String[] getCourseDetail(String coursePage, boolean x) {
+		return result;
+	}
+	
+	public static String[] getCourseDetails(String coursePageLink) {
+		String coursePage = Requests.Try(() -> Requests.readAllBytes(Requests.get(coursePageLink).getEntity().getContent()));
 		// Gets rid of unnecessary whitespace
 		coursePage = coursePage.replaceAll("\\n", "").replaceAll("[ ]{2,}", " ");
 		
@@ -108,5 +97,22 @@ public class Scraper {
 		}
 		
 		return null;
+	}
+	
+	public static List<String> getChainedClasses(String coursePageLink) {
+		String page = Requests.Try(() -> new String(Requests.get(coursePageLink).getEntity().getContent().readAllBytes()));
+		page = page.replaceAll("\\n", "").replaceAll("[ ]{2,}", " ");
+		page = page.replaceAll(".*?<ul(.*?)</ul>.*", "$1");
+		
+		Pattern pattern = Pattern.compile("regnum=(\\d+)");
+		Matcher matcher = pattern.matcher(page);
+		
+		List<String> result = new ArrayList<>();
+		
+		while(matcher.find()) {
+			result.add(matcher.group(1));
+		}
+		
+		return result;
 	}
 }

@@ -12,23 +12,13 @@ import org.apache.http.impl.client.HttpClients;
 public class Requests {
 
 	public static HttpResponse get(String url) throws ClientProtocolException, IOException {
-		HttpClient client = HttpClients.createDefault();
-		
+		HttpClient client = HttpClients.createMinimal();
 		HttpGet get = new HttpGet(url);
-		get.addHeader("User-Agent", "classrooms-finder");
-		
 		return client.execute(get);
 	}
 	
 	public static String readAllBytes(InputStream is) throws IOException {
-		String result = new String();
-		
-		int bit = -1;
-		
-		while((bit = is.read()) != -1)
-			result += (char) bit;
-		
-		return result;
+		return new String(is.readAllBytes());
 	}
 	
 	public static interface Throws<T> {

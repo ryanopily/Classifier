@@ -6,131 +6,128 @@ import java.util.List;
 
 public class Course {
 
-	public List<String> fields;
+	private String databaseFormat = null;
+	private String coursePageLink = null;
 	
-	// For multiple meeting times.
-	public String customDbFmt = null;
-	
-	// http://www.buffalo.edu/class-schedule?switch=showclass{detail}
-	private String detail;
-	
-	public Course(List<String> fields, String detail) {
-		this.fields = fields;
-		this.detail = detail;
-		
-		cleanFields();
-	}
-	
-	public void cleanFields() {
-		// Clean up stupid HTML special encodings - this field is a number
-		fields.set(0, fields.get(0).replaceAll("\\&[^;]+;", ""));
-		
-		// Trim whitespace and clean up encodings
-		for(int i = 1; i < fields.size(); i++) {
-			fields.set(i, fields.get(i).trim()
-									   .replaceAll("\\&amp;", "&")
-							    	   .replaceAll("\\&[^;]+;", ""));
-		}
-
-		String[] deptCourse = fields.get(1).split(" ");
-		fields.set(1, deptCourse[0]);
-		fields.add(2, deptCourse[1]);
-		
-		fields.add(9, "?");
-
-		// Class meets in different rooms on different days and at different times - requires us to insert multiple records for the same class
-		if(fields.get(7).matches("Multiple meeting patterns.") || fields.get(8).matches("See class detail")) {
-			multipleMeetingPatterns(fields.get(1), fields.get(0));
-		}
-		
-		else if(fields.get(8).matches("[^ ]+ .*")) {
-			
-			// Separate building from room number
-			String[] buildRoom = fields.get(8).split(" ");
-			String[] field8 = new String[buildRoom.length-1];
-			
-	        System.arraycopy(buildRoom, 0, field8, 0, field8.length);
-
-			fields.set(8, String.join(" ", field8));
-			fields.set(9, buildRoom[buildRoom.length-1]);
-		}
-		
-		// TBA, etc.
-		else
-			fields.set(9, fields.get(8));
-		
-		for(int i = 1; i < fields.size(); i++) 
-			fields.set(i, "\"" + fields.get(i) + "\"");
+	public Course(List<String> fields) {
+		cleanFields(fields);
 	}
 	
 	@Override
 	public String toString() {
-		return Arrays.toString(fields.toArray());
+		return databaseFormat;
 	}
 	
 	public String databaseFormat() {
-		return customDbFmt == null ? "(" + String.join(", ", fields.toArray(new String[0])) + ")" : customDbFmt;
+		return databaseFormat;
 	}
 	
-	public void multipleMeetingPatterns(String dept, String regnum) {
+	/** 
+	 Fields format: 
+	 0 = regnum/class,
+	 1 = department  ,
+	 2 = course,
+	 3 = title,
+	 4 = section,
+	 5 = type,
+	 6 = days,
+	 7 = time,
+	 8 = building,
+	 9 = room,
+	 10 = campus,
+	 11 = instructor,
+	 12 = status
+	  **/
+	private void cleanFields(List<String> fields) {
+		trim(fields);
+		this.coursePageLink = fields.get(1).replaceAll(".*\"(.*)\".*", "$1");
+		
+		// Check if enrollment in this course is "chained"
+		if(fields.get(0).length() == 0) {
+			String classes = Scraper.getChainedClasses(coursePageLink).toString();
+			fields.set(0, classes.substring(1, classes.length()-1));
+		}
+		
+		// Split 'Course' into Department and Course Number
+		String[] temp = fields.get(1).replaceAll(".*>(.*)<.*","$1").split(" ");
+		fields.set(1, temp[0]); // Department
+		fields.add(2, temp[1]); // Course number
+		fields.add(9, "?"); // Room number (we will update later)
+
+		// Class meets in different rooms on different days and at different times - requires us to insert multiple records for the same class
+		if(fields.get(7).matches("Multiple meeting patterns.") || fields.get(8).matches("See class detail")) {
+			multipleMeetingPatterns(fields);
+			return;
+		}
+			
+		// Split 'Room' into Building and Room NUmber
+		if (fields.get(8).matches(".+ .+")) {
+			temp = fields.get(8).split(" ");
+			fields.set(8, temp[0]); // Building
+			fields.set(9, temp[1]); // Room number
+		} else fields.set(9, fields.get(8));
+		
+		fields.set(7, fields.get(7).replaceAll(" - ", "-"));
+		
+		quote(fields);
+		databaseFormat = "(" + String.join(", ", fields) + ")";
+	}
+	
+	private void trim(List<String> fields) {
+		// Trim whitespace and clean up encodings
+		for(int i = 0; i < fields.size(); i++) {
+			fields.set(i, fields.get(i).trim()
+					.replaceAll("\\&amp;", "&")
+					.replaceAll("\\&[^;]+;", ""));
+		}
+	}
+	
+	private void quote(List<String> fields) {
+		for(int i = 0; i < fields.size(); i++) {
+			fields.set(i, "\"" + fields.get(i) + "\"");
+		}
+	}
+	
+	public void multipleMeetingPatterns(List<String> fields) {
 		
 		// Details are all the multiple meeting times - (days, time, building, room) fields
 		List<String> details = new ArrayList<String>();
-		details.addAll(Arrays.asList(Scraper.getCourseDetail(CLASS_DETAIL + detail)));
+		details.addAll(Arrays.asList(Scraper.getCourseDetails(coursePageLink)));
 		
-		// Clean up whitespace and encodings.
-		for(int i = 0; i < details.size(); i++) {
-			details.set(i, details.get(i).trim()
-					   				   .replaceAll("\\&amp;", "&")
-					   				   .replaceAll("\\&[^;]+;", ""));
-		}
+		trim(details);
+		quote(details);
+		quote(fields);
 		
-		for(int i = 1; i < fields.size(); i++) {
-			fields.set(i, "\"" + fields.get(i) + "\"");
-		}
+		StringBuilder format = new StringBuilder();
 		
-		String format = "";
-
 		while(details.size() > 0) {
-			
 			// Details should always come in 4, if not, we should fill in the blanks
-			if(details.size() < 4) {
-				String[] bloat = new String[4-details.size()];
-				Arrays.fill(bloat, "?");
-				details.addAll(Arrays.asList(bloat));
-			}
+			while(details.size() % 4 != 0)
+				details.add("?");
 			
 			fields.set(6, details.get(0));
 			fields.set(7, details.get(1));
 				
-			if(details.get(2).matches("[^ ]+ .*")) {
-				String[] buildRoom = details.get(2).split(" ");
-				String[] field8 = new String[buildRoom.length-1];
+			if(details.get(2).matches(".+ .+")) {
+				String temp = details.get(2);
+				int index = temp.lastIndexOf(' ');
 				
-		        System.arraycopy(buildRoom, 0, field8, 0, field8.length);
-
-				fields.set(8, String.join(" ", field8));
-				fields.set(9, buildRoom[buildRoom.length-1]);
-			}
-				
-			else {
+				fields.set(8, temp.substring(0, index) + "\"");
+				fields.set(9, "\"" + temp.substring(index+1, temp.length()));
+			} else {
 				fields.set(8, details.get(2));
 				fields.set(9, details.get(2));
 			}
 			
-			details.remove(0);
-			details.remove(0);
-			details.remove(0);
-			details.remove(0);
+			fields.set(10, details.get(3));
 			
-			for(int i = 6; i < 10; i++) 
-				fields.set(i, "\"" + fields.get(i) + "\"");
-			
-			format += databaseFormat() + ",";
+			for(int i = 0; i < 4; i++)
+				details.remove(0);
+
+			format.append("(" + String.join(", ", fields) + ")" + ",");
 		}
 		
-		customDbFmt = format.substring(0,format.length()-1);
+		format.deleteCharAt(format.length()-1);
+		databaseFormat = format.toString();
 	}
-	
-	private static String CLASS_DETAIL = "http://www.buffalo.edu/class-schedule?switch=showclass";
 }
